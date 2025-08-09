@@ -5,79 +5,92 @@ const API_URL = "http://localhost:3000";
 let lastTabId = null;
 let startTime = null;
 
-// Listen for when a tab is activated
-chrome.tabs.onActivated.addListener(handleTabChange);
-
-// Listen for when a tab's URL is updated
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.url) {
-    handleTabChange(tabId);
+// New, centralized function to handle tab changes
+async function processTabChange(tabId) {
+  // Guard against invalid tab IDs
+  if (tabId === chrome.tabs.TAB_ID_NONE) {
+    return;
   }
-});
 
-// Listen for when a tab is removed
-chrome.tabs.onRemoved.addListener(handleTabRemoved);
-
-async function handleTabChange(activeInfo) {
-  const tabId = typeof activeInfo === "object" ? activeInfo.tabId : activeInfo;
-
+  // Save time for the previous active tab
   if (lastTabId !== null && startTime !== null && lastTabId !== tabId) {
-    await saveTimeForLastTab();
+    await saveTimeForLastTab(lastTabId);
   }
 
+  // Set the new active tab
   lastTabId = tabId;
   startTime = Date.now();
 }
 
-async function handleTabRemoved(tabId) {
+// Listen for when a tab becomes active
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  processTabChange(activeInfo.tabId);
+});
+
+// Listen for when a tab's URL is updated
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // Only process if the URL has changed and is a valid web page
+  if (
+    changeInfo.status === "complete" &&
+    tab.url &&
+    !tab.url.startsWith("chrome://")
+  ) {
+    processTabChange(tabId);
+  }
+});
+
+// Listen for when a tab is removed
+chrome.tabs.onRemoved.addListener(async (tabId) => {
   if (tabId === lastTabId) {
-    await saveTimeForLastTab();
+    await saveTimeForLastTab(tabId);
     lastTabId = null;
     startTime = null;
   }
-}
+});
 
-async function saveTimeForLastTab() {
-  if (lastTabId && startTime) {
-    const endTime = Date.now();
-    const duration = Math.round((endTime - startTime) / 1000);
-
-    if (duration <= 0) return;
-
-    try {
-      const tab = await new Promise((resolve) =>
-        chrome.tabs.get(lastTabId, resolve)
-      );
-
-      if (tab && tab.url && !tab.url.startsWith("chrome://")) {
-        const url = new URL(tab.url).hostname;
-        const title = tab.title;
-
-        const storage = await chrome.storage.local.get("websiteTime");
-        let websiteTime = storage.websiteTime || {};
-
-        websiteTime[url] = {
-          title: title,
-          totalTime:
-            (websiteTime[url] ? websiteTime[url].totalTime : 0) + duration,
-        };
-
-        await chrome.storage.local.set({ websiteTime });
-        console.log(
-          `Saved ${duration}s for ${url}. Total: ${websiteTime[url].totalTime}s`
-        );
-      }
-    } catch (e) {
-      console.error("Error getting tab info:", e);
-    }
+async function saveTimeForLastTab(tabId) {
+  if (!tabId || !startTime) {
+    return;
   }
+
+  const endTime = Date.now();
+  const duration = Math.round((endTime - startTime) / 1000);
+
+  if (duration <= 0) return;
+
+  chrome.tabs.get(tabId, async (tab) => {
+    if (chrome.runtime.lastError) {
+      console.warn(`Tab with ID ${tabId} no longer exists.`);
+      return;
+    }
+
+    if (tab.url && !tab.url.startsWith("chrome://")) {
+      const url = new URL(tab.url).hostname;
+      const title = tab.title;
+
+      const storage = await chrome.storage.local.get("websiteTime");
+      let websiteTime = storage.websiteTime || {};
+
+      websiteTime[url] = {
+        title: title,
+        totalTime:
+          (websiteTime[url] ? websiteTime[url].totalTime : 0) + duration,
+      };
+
+      await chrome.storage.local.set({ websiteTime });
+      console.log(
+        `Saved ${duration}s for ${url}. Total: ${websiteTime[url].totalTime}s`
+      );
+    }
+  });
 }
 
 chrome.alarms.create("sendDataAlarm", { periodInMinutes: 5 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === "sendDataAlarm") {
-    await saveTimeForLastTab();
+    // Save time for the currently active tab before sending data
+    await saveTimeForLastTab(lastTabId);
 
     const storage = await chrome.storage.local.get(["token", "websiteTime"]);
     const token = storage.token;
@@ -88,18 +101,23 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       return;
     }
 
+    const sendPromises = [];
     for (const url in websiteTime) {
       if (
         Object.prototype.hasOwnProperty.call(websiteTime, url) &&
         websiteTime[url].totalTime > 0
       ) {
-        await sendTimeDataToBackend(
-          url,
-          websiteTime[url].title,
-          websiteTime[url].totalTime
+        sendPromises.push(
+          sendTimeDataToBackend(
+            url,
+            websiteTime[url].title,
+            websiteTime[url].totalTime
+          )
         );
       }
     }
+
+    await Promise.all(sendPromises);
     await chrome.storage.local.set({ websiteTime: {} });
   }
 });
