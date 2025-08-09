@@ -5,31 +5,24 @@ const API_URL = "http://localhost:3000";
 let lastTabId = null;
 let startTime = null;
 
-// New, centralized function to handle tab changes
 async function processTabChange(tabId) {
-  // Guard against invalid tab IDs
   if (tabId === chrome.tabs.TAB_ID_NONE) {
     return;
   }
 
-  // Save time for the previous active tab
   if (lastTabId !== null && startTime !== null && lastTabId !== tabId) {
     await saveTimeForLastTab(lastTabId);
   }
 
-  // Set the new active tab
   lastTabId = tabId;
   startTime = Date.now();
 }
 
-// Listen for when a tab becomes active
 chrome.tabs.onActivated.addListener((activeInfo) => {
   processTabChange(activeInfo.tabId);
 });
 
-// Listen for when a tab's URL is updated
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // Only process if the URL has changed and is a valid web page
   if (
     changeInfo.status === "complete" &&
     tab.url &&
@@ -39,10 +32,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// Listen for when a tab is removed
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  await saveTimeForLastTab(tabId);
   if (tabId === lastTabId) {
-    await saveTimeForLastTab(tabId);
     lastTabId = null;
     startTime = null;
   }
@@ -58,11 +50,16 @@ async function saveTimeForLastTab(tabId) {
 
   if (duration <= 0) return;
 
-  chrome.tabs.get(tabId, async (tab) => {
-    if (chrome.runtime.lastError) {
-      console.warn(`Tab with ID ${tabId} no longer exists.`);
-      return;
-    }
+  try {
+    const tab = await new Promise((resolve, reject) => {
+      chrome.tabs.get(tabId, (result) => {
+        if (chrome.runtime.lastError) {
+          // Do not log a warning, as per your request
+          return reject();
+        }
+        resolve(result);
+      });
+    });
 
     if (tab.url && !tab.url.startsWith("chrome://")) {
       const url = new URL(tab.url).hostname;
@@ -82,14 +79,16 @@ async function saveTimeForLastTab(tabId) {
         `Saved ${duration}s for ${url}. Total: ${websiteTime[url].totalTime}s`
       );
     }
-  });
+  } catch (e) {
+    // Silently ignore if the tab no longer exists.
+    return;
+  }
 }
 
 chrome.alarms.create("sendDataAlarm", { periodInMinutes: 5 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === "sendDataAlarm") {
-    // Save time for the currently active tab before sending data
     await saveTimeForLastTab(lastTabId);
 
     const storage = await chrome.storage.local.get(["token", "websiteTime"]);
@@ -155,7 +154,6 @@ async function sendTimeDataToBackend(
   }
 }
 
-// Authentication Functions
 async function registerUser(username, password) {
   try {
     const response = await fetch(`${API_URL}/register`, {
@@ -196,7 +194,6 @@ async function loginUser(username, password) {
   }
 }
 
-// Message Listener
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "register") {
     registerUser(request.username, request.password).then(sendResponse);
