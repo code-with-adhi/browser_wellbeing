@@ -102,12 +102,10 @@ app.post("/register", async (req, res) => {
       [username, password_hash]
     );
 
-    res
-      .status(201)
-      .json({
-        message: "User registered successfully",
-        userId: result.insertId,
-      });
+    res.status(201).json({
+      message: "User registered successfully",
+      userId: result.insertId,
+    });
   } catch (error) {
     console.error("Registration error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -141,7 +139,7 @@ app.post("/login", async (req, res) => {
     }
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {
-      expiresIn: "1h",
+      expiresIn: "700h",
     });
 
     res.status(200).json({ message: "Login successful", token });
