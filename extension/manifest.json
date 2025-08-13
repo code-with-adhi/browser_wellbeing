@@ -4,6 +4,7 @@
   "description": "Monitors time spent on websites to help with digital wellbeing.",
   "version": "1.0",
   "permissions": ["tabs", "storage", "alarms"],
+  "host_permissions": ["http://localhost:3000/*"],
   "background": {
     "service_worker": "background.js"
   },
