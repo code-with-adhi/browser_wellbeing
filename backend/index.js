@@ -17,8 +17,32 @@ const PORT = process.env.PORT || 3000;
 // Set the number of salt rounds for password hashing
 const saltRounds = 10;
 
-// Middleware to enable CORS and parse JSON bodies from incoming requests
-app.use(cors());
+// This is your "guest list" of allowed websites.
+const whitelist = [
+  // This will be filled in later when you deploy your dashboard frontend.
+];
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow if the origin is in our whitelist (for the future dashboard)
+    if (whitelist.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    }
+    // OR, automatically allow any request coming from a Chrome Extension
+    else if (origin && origin.startsWith("chrome-extension://")) {
+      callback(null, true);
+    }
+    // Otherwise, block the request
+    else {
+      callback(new Error("This origin is not allowed by CORS"));
+    }
+  },
+};
+
+// Use the CORS middleware with your custom options
+app.use(cors(corsOptions));
+
+// Middleware to parse JSON bodies from incoming requests
 app.use(express.json());
 
 // ----------------------------------------------------------------------
@@ -163,10 +187,10 @@ app.post("/track", authenticateToken, async (req, res) => {
 
   try {
     const query = `
-      INSERT INTO time_tracking (user_id, website_url, website_title, visit_date, total_time_seconds)
-      VALUES (?, ?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE total_time_seconds = total_time_seconds + ?
-    `;
+      INSERT INTO time_tracking (user_id, website_url, website_title, visit_date, total_time_seconds)
+      VALUES (?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE total_time_seconds = total_time_seconds + ?
+    `;
     const values = [
       userId,
       website_url,
